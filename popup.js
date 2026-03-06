@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const saveButton = document.getElementById('saveHtml');
   
   if (!saveButton) {
-    console.error('找不到保存按钮');
+    console.error('Save button not found');
     return;
   }
   
@@ -11,47 +11,47 @@ document.addEventListener('DOMContentLoaded', function() {
   
   saveButton.addEventListener('click', async function() {
     if (isSaving) {
-      console.log('正在保存中，请稍候...');
+      console.log('Already saving, please wait...');
       return;
     }
     
     isSaving = true;
     saveButton.disabled = true;
-    saveButton.textContent = '准备中...';
+    saveButton.textContent = 'Preparing...';
     
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tabs || tabs.length === 0) {
-        throw new Error('没有找到活动标签页');
+        throw new Error('No active tab found');
       }
       
       const tab = tabs[0];
       
       if (!tab.url || !tab.url.startsWith('http')) {
         if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://'))) {
-          throw new Error('无法保存Chrome内部页面或扩展程序页面。请访问普通网页。');
+          throw new Error('Cannot save Chrome internal pages. Please visit a normal webpage.');
         } else {
-          throw new Error('只能保存HTTP或HTTPS网页');
+          throw new Error('Can only save HTTP or HTTPS webpages');
         }
       }
       
-      saveButton.textContent = '截图页面...';
+      saveButton.textContent = 'Capturing...';
       
       const pageInfo = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => ({
-          title: document.title || '未命名页面',
+          title: document.title || 'Untitled Page',
           url: window.location.href
         })
       });
       
-      const title = pageInfo[0]?.result?.title || '网页';
+      const title = pageInfo[0]?.result?.title || 'Page';
       const safeTitle = title
         .replace(/[<>:"/\\|?*]/g, '_')
         .replace(/\s+/g, ' ')
         .trim()
-        .substring(0, 100) || '网页';
+        .substring(0, 100) || 'Page';
       
       const filename = safeTitle + '.pdf';
       
@@ -61,10 +61,10 @@ document.addEventListener('DOMContentLoaded', function() {
       });
       
       if (!dataUrl) {
-        throw new Error('无法截图');
+        throw new Error('Cannot capture screenshot');
       }
       
-      saveButton.textContent = '生成PDF中...';
+      saveButton.textContent = 'Generating PDF...';
       
       const jsPDF = window.jspdf.jsPDF;
       
@@ -87,7 +87,7 @@ document.addEventListener('DOMContentLoaded', function() {
       
       pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
       
-      saveButton.textContent = '保存文件中...';
+      saveButton.textContent = 'Saving...';
       
       const pdfBlob = pdf.output('blob');
       const blobUrl = URL.createObjectURL(pdfBlob);
@@ -105,10 +105,10 @@ document.addEventListener('DOMContentLoaded', function() {
         URL.revokeObjectURL(blobUrl);
       }, 1000);
       
-      saveButton.textContent = '保存成功！';
+      saveButton.textContent = 'Saved!';
       
       const successDiv = document.createElement('div');
-      successDiv.textContent = `已保存: ${filename}`;
+      successDiv.textContent = `Saved: ${filename}`;
       successDiv.style.cssText = `
         margin-top: 10px;
         padding: 8px 12px;
@@ -141,14 +141,14 @@ document.addEventListener('DOMContentLoaded', function() {
       }, 2000);
       
     } catch (error) {
-      console.error('保存PDF失败:', error);
+      console.error('Save PDF failed:', error);
       
-      saveButton.textContent = '保存失败';
+      saveButton.textContent = 'Failed';
       
       const errorDiv = document.createElement('div');
-      let errorMessage = error.message || '未知错误';
+      let errorMessage = error.message || 'Unknown error';
       
-      errorDiv.textContent = '错误: ' + errorMessage;
+      errorDiv.textContent = 'Error: ' + errorMessage;
       errorDiv.style.cssText = `
         margin-top: 10px;
         padding: 8px 12px;
