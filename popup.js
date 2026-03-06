@@ -168,16 +168,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const pdfBlob = pdf.output('blob');
       const blobUrl = URL.createObjectURL(pdfBlob);
-
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      await new Promise((resolve, reject) => {
+        chrome.downloads.download({ url: blobUrl, filename: filename, saveAs: true }, (downloadId) => {
+          URL.revokeObjectURL(blobUrl);
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(downloadId);
+        });
+      });
 
       saveButton.textContent = 'Saved!';
       showStatus(saveButton, `Saved: ${filename}`, true);
