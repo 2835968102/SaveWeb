@@ -20,8 +20,6 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "pageCapture",  
-    "downloads"     
+    "tabCapture"     
   ]
-
 }

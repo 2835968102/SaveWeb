@@ -1,10 +1,5 @@
-document.getElementById('clickMe').addEventListener('click', function() {
-    alert('Button clicked!');
-});
-
-// popup.js - 使用pageCapture API保存为PDF
 document.addEventListener('DOMContentLoaded', function() {
-  const saveButton = document.getElementById('saveHtml'); // 或 savePdf
+  const saveButton = document.getElementById('saveHtml');
   
   if (!saveButton) {
     console.error('找不到保存按钮');
@@ -25,7 +20,6 @@ document.addEventListener('DOMContentLoaded', function() {
     saveButton.textContent = '准备中...';
     
     try {
-      // 获取当前标签页
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tabs || tabs.length === 0) {
@@ -34,7 +28,6 @@ document.addEventListener('DOMContentLoaded', function() {
       
       const tab = tabs[0];
       
-      // 检查页面类型
       if (!tab.url || !tab.url.startsWith('http')) {
         if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://'))) {
           throw new Error('无法保存Chrome内部页面或扩展程序页面。请访问普通网页。');
@@ -43,27 +36,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
       
-      saveButton.textContent = '生成PDF中...';
+      saveButton.textContent = '截图页面...';
       
-      // 使用pageCapture API保存为PDF
-      const pdfData = await new Promise((resolve, reject) => {
-        chrome.pageCapture.saveAsPDF(
-          { tabId: tab.id },
-          (pdfData) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(pdfData);
-            }
-          }
-        );
-      });
-      
-      if (!pdfData) {
-        throw new Error('无法生成PDF文件');
-      }
-      
-      // 获取页面标题作为文件名
       const pageInfo = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => ({
@@ -81,11 +55,42 @@ document.addEventListener('DOMContentLoaded', function() {
       
       const filename = safeTitle + '.pdf';
       
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: 'png',
+        quality: 100
+      });
+      
+      if (!dataUrl) {
+        throw new Error('无法截图');
+      }
+      
+      saveButton.textContent = '生成PDF中...';
+      
+      const jsPDF = window.jspdf.jsPDF;
+      
+      const img = new Image();
+      img.src = dataUrl;
+      
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+      
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+      
+      const pdf = new jsPDF({
+        orientation: imgWidth > imgHeight ? 'l' : 'p',
+        unit: 'px',
+        format: [imgWidth, imgHeight]
+      });
+      
+      pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
+      
       saveButton.textContent = '保存文件中...';
       
-      // 创建Blob并下载
-      const blob = new Blob([pdfData], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
+      const pdfBlob = pdf.output('blob');
+      const blobUrl = URL.createObjectURL(pdfBlob);
       
       const a = document.createElement('a');
       a.href = blobUrl;
@@ -96,14 +101,12 @@ document.addEventListener('DOMContentLoaded', function() {
       a.click();
       document.body.removeChild(a);
       
-      // 清理
       setTimeout(() => {
         URL.revokeObjectURL(blobUrl);
       }, 1000);
       
       saveButton.textContent = '保存成功！';
       
-      // 显示成功消息
       const successDiv = document.createElement('div');
       successDiv.textContent = `已保存: ${filename}`;
       successDiv.style.cssText = `
@@ -125,13 +128,11 @@ document.addEventListener('DOMContentLoaded', function() {
       successDiv.className = 'pdf-status';
       saveButton.parentNode.insertBefore(successDiv, saveButton.nextSibling);
       
-      // 2秒后恢复按钮
       setTimeout(() => {
         saveButton.textContent = originalText;
         saveButton.disabled = false;
         isSaving = false;
         
-        // 3秒后隐藏提示
         setTimeout(() => {
           if (successDiv.parentNode) {
             successDiv.remove();
@@ -144,16 +145,8 @@ document.addEventListener('DOMContentLoaded', function() {
       
       saveButton.textContent = '保存失败';
       
-      // 显示错误消息
       const errorDiv = document.createElement('div');
-      let errorMessage = error.message;
-      
-      // 提供更友好的错误提示
-      if (error.message.includes('pageCapture')) {
-        errorMessage = 'pageCapture API不可用。请检查manifest.json权限配置。';
-      } else if (error.message.includes('permission')) {
-        errorMessage = '权限不足。请检查插件权限设置。';
-      }
+      let errorMessage = error.message || '未知错误';
       
       errorDiv.textContent = '错误: ' + errorMessage;
       errorDiv.style.cssText = `
