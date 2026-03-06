@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return;
   }
   
-  const originalText = saveButton.textContent;
+  const originalText = 'save as PDF';
   let isSaving = false;
   
   saveButton.addEventListener('click', async function() {
