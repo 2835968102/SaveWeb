@@ -20,6 +20,6 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "tabCapture"     
+    "tabs"
   ]
 }
