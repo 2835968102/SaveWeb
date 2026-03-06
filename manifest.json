@@ -19,19 +19,7 @@
   ],
   "permissions": [
     "activeTab",
-    "scripting"     
-  ],
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["html2canvas.min.js"],
-      "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["html2canvas.min.js"],
-      "matches": ["<all_urls>"]
-    }
+    "scripting",
+    "tabCapture"     
   ]
 }

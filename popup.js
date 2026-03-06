@@ -36,17 +36,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
       
-      saveButton.textContent = '获取页面信息...';
+      saveButton.textContent = '截图页面...';
       
       const pageInfo = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: () => ({
-          title: document.title || '未命名页面'
+          title: document.title || '未命名页面',
+          url: window.location.href
         })
       });
       
       const title = pageInfo[0]?.result?.title || '网页';
-      
       const safeTitle = title
         .replace(/[<>:"/\\|?*]/g, '_')
         .replace(/\s+/g, ' ')
@@ -55,53 +55,37 @@ document.addEventListener('DOMContentLoaded', function() {
       
       const filename = safeTitle + '.pdf';
       
-      saveButton.textContent = '生成长截图...';
-      
-      const captureResult = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: async () => {
-          const originalScrollY = window.scrollY;
-          const originalScrollX = window.scrollX;
-          
-          window.scrollTo(0, 0);
-          
-          const canvas = await html2canvas(document.documentElement, {
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: '#ffffff',
-            scale: 2,
-            windowWidth: document.documentElement.scrollWidth,
-            windowHeight: document.documentElement.scrollHeight
-          });
-          
-          window.scrollTo(originalScrollX, originalScrollY);
-          
-          return {
-            dataUrl: canvas.toDataURL('image/png'),
-            width: canvas.width,
-            height: canvas.height
-          };
-        },
-        injectImmediately: true,
-        args: []
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: 'png',
+        quality: 100
       });
       
-      if (!captureResult || !captureResult[0] || !captureResult[0].result) {
-        throw new Error('无法生成长截图');
+      if (!dataUrl) {
+        throw new Error('无法截图');
       }
-      
-      const { dataUrl, width, height } = captureResult[0].result;
       
       saveButton.textContent = '生成PDF中...';
       
       const jsPDF = window.jspdf.jsPDF;
-      const pdf = new jsPDF({
-        orientation: width > height ? 'l' : 'p',
-        unit: 'px',
-        format: [width, height]
+      
+      const img = new Image();
+      img.src = dataUrl;
+      
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
       });
       
-      pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+      
+      const pdf = new jsPDF({
+        orientation: imgWidth > imgHeight ? 'l' : 'p',
+        unit: 'px',
+        format: [imgWidth, imgHeight]
+      });
+      
+      pdf.addImage(dataUrl, 'PNG', 0, 0, imgWidth, imgHeight);
       
       saveButton.textContent = '保存文件中...';
       
