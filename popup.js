@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', function () {
   setupButton('saveSingleFile', 'Save as Single File', saveAsSingleFile);
-  setupButton('saveHtml', 'Save as HTML (fast)', saveAsHtml);
   setupButton('saveMd', 'Save as Markdown', saveAsMd);
 
   function setupButton(id, originalText, handler) {
@@ -252,27 +251,6 @@ document.addEventListener('DOMContentLoaded', function () {
     // for (const s of doc.querySelectorAll('script')) s.remove();
 
     btn.textContent = 'Saving…';
-    const content = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-    const filename = safeFilename(title, '.html');
-    await downloadBlob(content, filename, 'text/html');
-    btn.textContent = 'Saved!';
-    showStatus(btn, 'Saved: ' + filename, true);
-  }
-
-  // ── Save as HTML (fast, keeps external resource references) ───────────────
-
-  async function saveAsHtml(btn) {
-    const tab = await getActiveTab();
-    const { html, title, url: pageUrl } = await getPageHtml(tab.id);
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-
-    // Ensure relative URLs resolve via base href
-    const base = doc.createElement('base');
-    base.setAttribute('href', pageUrl);
-    doc.head.prepend(base);
-
     const content = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
     const filename = safeFilename(title, '.html');
     await downloadBlob(content, filename, 'text/html');
