@@ -347,6 +347,50 @@ document.addEventListener('DOMContentLoaded', function () {
       btn.textContent = `Saved ${imageCount} image(s)…`;
     }
 
+    // ── Fix internal anchor links for Markdown compatibility ──────────────────
+    {
+      const linkDom = new DOMParser().parseFromString(content, 'text/html');
+
+      // Compute a heading slug compatible with GitHub/Obsidian (supports Unicode)
+      function headingSlug(text) {
+        return text
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^\p{L}\p{N}-]/gu, '');
+      }
+
+      // Collect all fragment IDs referenced by internal links
+      const referencedIds = new Set();
+      for (const a of linkDom.querySelectorAll('a[href^="#"]')) {
+        const frag = a.getAttribute('href').slice(1);
+        if (frag) referencedIds.add(frag);
+      }
+
+      for (const id of referencedIds) {
+        const target = linkDom.getElementById(id);
+        if (!target) continue;
+
+        if (/^H[1-6]$/.test(target.tagName)) {
+          // Heading target: rewrite link to the Markdown-generated slug
+          const slug = headingSlug(target.textContent);
+          if (slug) {
+            for (const a of linkDom.querySelectorAll(`a[href="#${CSS.escape(id)}"]`)) {
+              a.setAttribute('href', '#' + slug);
+            }
+          }
+        } else {
+          // Non-heading target: insert a standalone <a id="..."> BEFORE the element
+          // (as a sibling, not inside it) to avoid duplicating any existing id
+          const anchor = linkDom.createElement('a');
+          anchor.setAttribute('id', id);
+          target.parentNode.insertBefore(anchor, target);
+        }
+      }
+
+      content = linkDom.body.innerHTML;
+    }
+
     // ── Turndown: HTML → Markdown ─────────────────────────────────────────────
     const turndownService = new TurndownService({
       headingStyle: 'atx',
@@ -360,6 +404,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
     turndownService.use(turndownPluginGfm.gfm);
     turndownService.keep(['sub', 'sup', 'u', 'ins', 'del', 'small', 'big']);
+
+    // Preserve standalone <a id="..."> anchors used as internal link targets
+    turndownService.addRule('anchorId', {
+      filter: (node) =>
+        node.nodeName === 'A' &&
+        node.hasAttribute('id') &&
+        !node.hasAttribute('href') &&
+        node.textContent.trim() === '',
+      replacement: (_content, node) => `<a id="${node.getAttribute('id')}"></a>`
+    });
 
     turndownService.addRule('fencedCodeBlock', {
       filter: (node) =>
