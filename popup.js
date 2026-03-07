@@ -1,240 +1,201 @@
-document.addEventListener('DOMContentLoaded', function() {
-  const saveButton = document.getElementById('saveHtml');
+document.addEventListener('DOMContentLoaded', function () {
+  setupButton('saveHtml', 'Save as HTML', saveAsHtml);
+  setupButton('saveMd', 'Save as Markdown', saveAsMd);
 
-  if (!saveButton) {
-    console.error('Save button not found');
-    return;
+  function setupButton(id, originalText, handler) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', async function () {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        await handler(btn);
+      } catch (err) {
+        console.error(err);
+        showStatus(btn, 'Error: ' + (err.message || 'Unknown error'), false);
+      } finally {
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.disabled = false;
+        }, 2000);
+      }
+    });
   }
 
-  const originalText = 'save as PDF';
-  let isSaving = false;
-
-  saveButton.addEventListener('click', async function() {
-    if (isSaving) return;
-
-    isSaving = true;
-    saveButton.disabled = true;
-    saveButton.textContent = 'Preparing...';
-
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-
-      if (!tabs || tabs.length === 0) throw new Error('No active tab found');
-
-      const tab = tabs[0];
-
-      if (!tab.url || !tab.url.startsWith('http')) {
-        if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://'))) {
-          throw new Error('Cannot save Chrome internal pages. Please visit a normal webpage.');
-        } else {
-          throw new Error('Can only save HTTP or HTTPS webpages');
-        }
-      }
-
-      // Get page dimensions and current scroll position
-      const pageInfoResult = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => ({
-          title: document.title || 'Untitled Page',
-          scrollHeight: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight,
-          devicePixelRatio: window.devicePixelRatio || 1,
-          savedScrollX: window.scrollX,
-          savedScrollY: window.scrollY
-        })
-      });
-
-      const { title, scrollHeight, viewportWidth, viewportHeight, devicePixelRatio, savedScrollX, savedScrollY } =
-        pageInfoResult[0].result;
-
-      const safeTitle = title.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim().substring(0, 100) || 'Page';
-      const filename = safeTitle + '.pdf';
-
-      // Hide fixed/sticky elements so they don't repeat in every screenshot
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          document.querySelectorAll('*').forEach(el => {
-            const pos = window.getComputedStyle(el).position;
-            if (pos === 'fixed' || pos === 'sticky') {
-              el.setAttribute('data-pdf-saved-visibility', el.style.visibility || '');
-              el.style.visibility = 'hidden';
-            }
-          });
-        }
-      });
-
-      // Scroll through the entire page and capture screenshots
-      const screenshots = [];
-      const totalSteps = Math.ceil(scrollHeight / viewportHeight);
-      let targetScrollY = 0;
-      let step = 0;
-
-      while (targetScrollY < scrollHeight) {
-        step++;
-        saveButton.textContent = `Capturing ${step}/${totalSteps}...`;
-
-        // Scroll to target position, get actual scroll position (may be clamped by browser)
-        const scrollResult = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (y) => {
-            window.scrollTo(0, y);
-            return window.scrollY;
-          },
-          args: [targetScrollY]
-        });
-
-        const actualScrollY = scrollResult[0].result;
-
-        // Wait for page to re-render after scroll (must be >=500ms to respect Chrome quota)
-        await new Promise(resolve => setTimeout(resolve, 600));
-
-        // Retry captureVisibleTab on rate-limit errors
-        let dataUrl;
-        for (let attempt = 1; attempt <= 5; attempt++) {
-          try {
-            dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-              format: 'png',
-              quality: 100
-            });
-            break;
-          } catch (captureErr) {
-            if (attempt === 5) throw captureErr;
-            await new Promise(resolve => setTimeout(resolve, 600 * attempt));
-          }
-        }
-
-        screenshots.push({ dataUrl, scrollY: actualScrollY });
-
-        // Stop if we've captured past the bottom of the page
-        if (actualScrollY + viewportHeight >= scrollHeight) break;
-
-        targetScrollY += viewportHeight;
-      }
-
-      // Restore original scroll position
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: (x, y) => window.scrollTo(x, y),
-        args: [savedScrollX, savedScrollY]
-      });
-
-      // Restore fixed/sticky elements
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          document.querySelectorAll('[data-pdf-saved-visibility]').forEach(el => {
-            el.style.visibility = el.getAttribute('data-pdf-saved-visibility');
-            el.removeAttribute('data-pdf-saved-visibility');
-          });
-        }
-      });
-
-      saveButton.textContent = 'Generating PDF...';
-
-      // Stitch all screenshots onto a single canvas
-      const physicalWidth = viewportWidth * devicePixelRatio;
-      const physicalHeight = scrollHeight * devicePixelRatio;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = physicalWidth;
-      canvas.height = physicalHeight;
-      const ctx = canvas.getContext('2d');
-
-      for (const { dataUrl, scrollY } of screenshots) {
-        const img = new Image();
-        img.src = dataUrl;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-        ctx.drawImage(img, 0, scrollY * devicePixelRatio);
-      }
-
-      const fullPageDataUrl = canvas.toDataURL('image/png');
-
-      // Generate PDF from the stitched full-page image
-      const jsPDF = window.jspdf.jsPDF;
-      const pdf = new jsPDF({
-        orientation: physicalWidth > physicalHeight ? 'l' : 'p',
-        unit: 'px',
-        format: [physicalWidth, physicalHeight]
-      });
-
-      pdf.addImage(fullPageDataUrl, 'PNG', 0, 0, physicalWidth, physicalHeight);
-
-      saveButton.textContent = 'Saving...';
-
-      const pdfBlob = pdf.output('blob');
-      const blobUrl = URL.createObjectURL(pdfBlob);
-      await new Promise((resolve, reject) => {
-        chrome.downloads.download({ url: blobUrl, filename: filename, saveAs: true }, (downloadId) => {
-          URL.revokeObjectURL(blobUrl);
-          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-          else resolve(downloadId);
-        });
-      });
-
-      saveButton.textContent = 'Saved!';
-      showStatus(saveButton, `Saved: ${filename}`, true);
-
-      setTimeout(() => {
-        saveButton.textContent = originalText;
-        saveButton.disabled = false;
-        isSaving = false;
-      }, 2000);
-
-    } catch (error) {
-      // Make sure fixed/sticky elements are restored on error
-      try {
-        const tabs2 = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tabs2 && tabs2[0]) {
-          await chrome.scripting.executeScript({
-            target: { tabId: tabs2[0].id },
-            func: () => {
-              document.querySelectorAll('[data-pdf-saved-visibility]').forEach(el => {
-                el.style.visibility = el.getAttribute('data-pdf-saved-visibility');
-                el.removeAttribute('data-pdf-saved-visibility');
-              });
-            }
-          });
-        }
-      } catch (_) {}
-
-      console.error('Save PDF failed:', error);
-      saveButton.textContent = 'Failed';
-      showStatus(saveButton, 'Error: ' + (error.message || 'Unknown error'), false);
-
-      setTimeout(() => {
-        saveButton.textContent = originalText;
-        saveButton.disabled = false;
-        isSaving = false;
-      }, 2000);
+  async function getActiveTab() {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || tabs.length === 0) throw new Error('No active tab found');
+    const tab = tabs[0];
+    if (!tab.url || !tab.url.startsWith('http')) {
+      throw new Error('Can only save HTTP or HTTPS webpages');
     }
-  });
+    return tab;
+  }
+
+  function safeFilename(title, ext) {
+    return (
+      (title || 'Page')
+        .replace(/[<>:"/\\|?*]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 100) || 'Page'
+    ) + ext;
+  }
+
+  async function downloadBlob(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    await new Promise((resolve, reject) => {
+      chrome.downloads.download({ url, filename, saveAs: true }, (downloadId) => {
+        URL.revokeObjectURL(url);
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(downloadId);
+      });
+    });
+  }
+
+  // Get the full page HTML from the active tab, with base href fixed for relative URLs.
+  // Mirrors markdownload's contentScript approach.
+  async function getPageHtml(tabId) {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        // Ensure a <title> exists
+        if (document.head.getElementsByTagName('title').length === 0) {
+          const t = document.createElement('title');
+          t.innerText = document.title;
+          document.head.append(t);
+        }
+
+        // Ensure a <base> element exists with an absolute href so that
+        // relative links/images resolve correctly after DOMParser re-parse.
+        let baseEl = document.head.querySelector('base');
+        if (!baseEl) {
+          baseEl = document.createElement('base');
+          document.head.append(baseEl);
+        }
+        const href = baseEl.getAttribute('href') || '';
+        if (!href || !href.startsWith(window.location.origin)) {
+          baseEl.setAttribute('href', window.location.href);
+        }
+
+        return {
+          html: document.documentElement.outerHTML,
+          title: document.title || 'Untitled',
+          url: window.location.href
+        };
+      }
+    });
+    return result[0].result;
+  }
+
+  // ── Save as HTML ──────────────────────────────────────────────────────────
+
+  async function saveAsHtml(btn) {
+    const tab = await getActiveTab();
+    const { html, title } = await getPageHtml(tab.id);
+    const content = '<!DOCTYPE html>\n' + html;
+    const filename = safeFilename(title, '.html');
+    await downloadBlob(content, filename, 'text/html');
+    btn.textContent = 'Saved!';
+    showStatus(btn, 'Saved: ' + filename, true);
+  }
+
+  // ── Save as Markdown (Readability + Turndown, like markdownload) ──────────
+
+  async function saveAsMd(btn) {
+    const tab = await getActiveTab();
+    const { html, title, url } = await getPageHtml(tab.id);
+
+    // 1. Parse the HTML string into a DOM (runs in popup context)
+    const parser = new DOMParser();
+    const dom = parser.parseFromString(html, 'text/html');
+
+    // 2. Run Readability to extract main article content
+    let content;
+    let articleTitle = title;
+    try {
+      const article = new Readability(dom).parse();
+      if (article && article.content) {
+        content = article.content;
+        if (article.title) articleTitle = article.title;
+      } else {
+        // Readability found nothing useful — fall back to full body
+        content = dom.body.innerHTML;
+      }
+    } catch (e) {
+      console.warn('Readability failed, falling back to body:', e);
+      content = dom.body.innerHTML;
+    }
+
+    // 3. Convert extracted HTML → Markdown with Turndown + GFM plugin
+    const turndownService = new TurndownService({
+      headingStyle: 'atx',
+      hr: '---',
+      bulletListMarker: '-',
+      codeBlockStyle: 'fenced',
+      emDelimiter: '_',
+      linkStyle: 'inlined',
+      linkReferenceStyle: 'full'
+    });
+
+    // Apply the full GFM plugin (tables, strikethrough, task list items, etc.)
+    turndownService.use(turndownPluginGfm.gfm);
+
+    // Preserve a few inline elements as-is (same as markdownload)
+    turndownService.keep(['sub', 'sup', 'u', 'ins', 'del', 'small', 'big']);
+
+    // Better fenced code block handling: detect language from class name
+    turndownService.addRule('fencedCodeBlock', {
+      filter: (node) =>
+        node.nodeName === 'PRE' &&
+        node.firstChild &&
+        node.firstChild.nodeName === 'CODE',
+      replacement: (content, node) => {
+        const codeEl = node.firstChild;
+        const langClass = codeEl.className || '';
+        const langMatch = langClass.match(/(?:language|lang)-(\S+)/);
+        const lang = langMatch ? langMatch[1] : '';
+        const code = codeEl.textContent.replace(/\n$/, '');
+        return '\n\n```' + lang + '\n' + code + '\n```\n\n';
+      }
+    });
+
+    const markdown = turndownService.turndown(content);
+
+    // 4. Assemble final document with a YAML-style title header
+    const frontmatter =
+      '---\n' +
+      'title: ' + articleTitle.replace(/:/g, '&#58;') + '\n' +
+      'source: ' + url + '\n' +
+      '---\n\n';
+
+    const filename = safeFilename(articleTitle, '.md');
+    await downloadBlob(frontmatter + markdown, filename, 'text/markdown');
+    btn.textContent = 'Saved!';
+    showStatus(btn, 'Saved: ' + filename, true);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   function showStatus(button, message, isSuccess) {
-    const oldStatus = button.parentNode.querySelector('.pdf-status, .pdf-error');
-    if (oldStatus) oldStatus.remove();
-
+    const old = button.parentNode.querySelector('.status-msg');
+    if (old) old.remove();
     const div = document.createElement('div');
     div.textContent = message;
-    div.className = isSuccess ? 'pdf-status' : 'pdf-error';
+    div.className = 'status-msg';
     div.style.cssText = `
-      margin-top: 10px;
-      padding: 8px 12px;
-      background-color: ${isSuccess ? '#d4edda' : '#f8d7da'};
+      margin-top: 8px;
+      padding: 6px 10px;
+      background: ${isSuccess ? '#d4edda' : '#f8d7da'};
       color: ${isSuccess ? '#155724' : '#721c24'};
       border: 1px solid ${isSuccess ? '#c3e6cb' : '#f5c6cb'};
       border-radius: 4px;
       font-size: 12px;
       word-break: break-all;
     `;
-    button.parentNode.insertBefore(div, button.nextSibling);
-
-    setTimeout(() => {
-      if (div.parentNode) div.remove();
-    }, 5000);
+    button.parentNode.appendChild(div);
+    setTimeout(() => { if (div.parentNode) div.remove(); }, 5000);
   }
 });
