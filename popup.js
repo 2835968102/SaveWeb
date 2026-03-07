@@ -43,16 +43,45 @@ document.addEventListener('DOMContentLoaded', function () {
     ) + ext;
   }
 
-  async function downloadBlob(content, filename, mimeType) {
+  async function downloadBlob(content, filename, mimeType, saveAs = true) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     await new Promise((resolve, reject) => {
-      chrome.downloads.download({ url, filename, saveAs: true }, (downloadId) => {
+      chrome.downloads.download({ url, filename, saveAs }, (downloadId) => {
         URL.revokeObjectURL(url);
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve(downloadId);
       });
     });
+  }
+
+  // Download an image fetched from background (base64) as a local file (no save dialog).
+  async function downloadImageBlob(base64, mimeType, filename) {
+    const byteChars = atob(base64);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+    await new Promise((resolve, reject) => {
+      chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, (downloadId) => {
+        URL.revokeObjectURL(blobUrl);
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(downloadId);
+      });
+    });
+  }
+
+  // Derive a safe local filename for an image URL (e.g. "photo.jpg").
+  function imageFilenameFromUrl(url, index) {
+    try {
+      const pathname = new URL(url).pathname;
+      const last = pathname.split('/').pop();
+      // Keep only if it looks like a real filename with extension
+      if (last && /\.\w{2,5}$/.test(last)) {
+        return last.replace(/[<>:"/\\|?*]/g, '_').substring(0, 80);
+      }
+    } catch (e) {}
+    return `image-${index + 1}.jpg`;
   }
 
   // Serialize the live DOM from the active tab (current visual state).
@@ -263,6 +292,7 @@ document.addEventListener('DOMContentLoaded', function () {
   async function saveAsMd(btn) {
     const tab = await getActiveTab();
     const { html, title, url } = await getPageHtml(tab.id);
+    const saveImagesLocally = document.getElementById('saveImagesLocally').checked;
 
     const parser = new DOMParser();
     const dom = parser.parseFromString(html, 'text/html');
@@ -282,6 +312,42 @@ document.addEventListener('DOMContentLoaded', function () {
       content = dom.body.innerHTML;
     }
 
+    const baseFilename = safeFilename(articleTitle, '');
+
+    // ── Optionally download images locally ────────────────────────────────────
+    if (saveImagesLocally) {
+      btn.textContent = 'Downloading images…';
+      const contentDom = new DOMParser().parseFromString(content, 'text/html');
+      const imgs = Array.from(contentDom.querySelectorAll('img[src]'));
+      let imageCount = 0;
+
+      for (let i = 0; i < imgs.length; i++) {
+        const img = imgs[i];
+        const src = img.getAttribute('src');
+        if (!src || src.startsWith('data:')) continue;
+
+        try {
+          const absUrl = new URL(src, url).href;
+          const resp = await fetchViaBackground(absUrl, false);
+          if (resp.base64) {
+            const mimeType = (resp.contentType || 'image/jpeg').split(';')[0].trim();
+            const imgFilename = imageFilenameFromUrl(absUrl, i);
+            const localPath = baseFilename + '/' + imgFilename;
+            await downloadImageBlob(resp.base64, mimeType, localPath);
+            img.setAttribute('src', localPath);
+            imageCount++;
+          }
+        } catch (e) {
+          console.warn('Skipped image:', src, e);
+        }
+        img.removeAttribute('srcset');
+      }
+
+      content = contentDom.body.innerHTML;
+      btn.textContent = `Saved ${imageCount} image(s)…`;
+    }
+
+    // ── Turndown: HTML → Markdown ─────────────────────────────────────────────
     const turndownService = new TurndownService({
       headingStyle: 'atx',
       hr: '---',
@@ -319,9 +385,13 @@ document.addEventListener('DOMContentLoaded', function () {
       '---\n\n';
 
     const filename = safeFilename(articleTitle, '.md');
-    await downloadBlob(frontmatter + markdown, filename, 'text/markdown');
+    // When images are saved locally, skip the dialog so paths stay relative
+    // to the downloads folder where images were placed.
+    const useSaveAs = !saveImagesLocally;
+    await downloadBlob(frontmatter + markdown, filename, 'text/markdown', useSaveAs);
     btn.textContent = 'Saved!';
-    showStatus(btn, 'Saved: ' + filename, true);
+    const note = saveImagesLocally ? ` (images → ${baseFilename}/)` : '';
+    showStatus(btn, 'Saved: ' + filename + note, true);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
