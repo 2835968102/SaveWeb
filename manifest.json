@@ -14,11 +14,10 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
+  "web_accessible_resources": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["Readability.js", "turndown.js", "turndown-plugin-gfm.js", "content-script.js"],
-      "run_at": "document_idle"
+      "resources": ["Readability.js", "turndown.js", "turndown-plugin-gfm.js"],
+      "matches": ["<all_urls>"]
     }
   ],
   "host_permissions": [
